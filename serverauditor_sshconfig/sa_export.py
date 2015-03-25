@@ -13,6 +13,7 @@ from serverauditor_sshconfig.core.api import API
 from serverauditor_sshconfig.core.cryptor import RNCryptor
 from serverauditor_sshconfig.core.logger import PrettyLogger
 from serverauditor_sshconfig.core.ssh_config import SSHConfig
+from serverauditor_sshconfig.core.known_hosts import KnownHosts
 from serverauditor_sshconfig.core.utils import p_input, p_map
 
 
@@ -25,13 +26,22 @@ class ExportSSHConfigApplication(SSHConfigApplication):
         self._get_sa_keys_and_connections()
         self._decrypt_sa_keys_and_connections()
         self._fix_sa_keys_and_connections()
+        self._get_sa_known_host()
+        self._decrypt_sa_known_host()
 
         self._parse_local_config()
         self._sync_for_export()
         self._choose_new_hosts()
         self._get_full_hosts()
+        if self._local_hosts:
+            self._create_keys_and_connections()
 
-        self._create_keys_and_connections()
+        self._parse_local_known_hosts()
+        self._sync_known_host_for_export()
+        self._get_full_known_hosts()
+
+        if self._local_known_hosts:
+            self._create_known_hosts()
 
         self._valediction()
         return
@@ -115,9 +125,6 @@ class ExportSSHConfigApplication(SSHConfigApplication):
 
             self._logger.log(get_hosts_names(), color='blue')
 
-        if not self._local_hosts:
-            self._valediction()
-            sys.exit(0)
         return
 
     @description("Getting full information...")
@@ -173,9 +180,43 @@ class ExportSSHConfigApplication(SSHConfigApplication):
         self._api.create_keys_and_connections(self._full_local_hosts, self._sa_username, self._sa_auth_key)
         return
 
+    @description("Synchronization...")
+    def _sync_known_host_for_export(self):
+        def is_exist(known_host):
+            for sa_known_host in self._sa_known_hosts:
+                if (sa_known_host['hostnames'] == known_host['hostnames'] and
+                        sa_known_host['key'] == known_host['key'] and
+                        sa_known_host['marker'] == known_host['marker']):
+                    return True
+
+            return False
+
+        for known_host in self._local_known_hosts[:]:
+            if is_exist(known_host):
+                self._local_known_hosts.remove(known_host)
+
+        return
+
+    @description("Getting full information...")
+    def _get_full_known_hosts(self):
+
+        def encrypt_host(known_host):
+            for attr in ('comment', 'hostnames', 'key'):
+                known_host[attr] = self._cryptor.encrypt(known_host[attr])
+            return known_host
+
+        self._full_local_known_hosts = p_map(
+            encrypt_host, self._local_known_hosts)
+        return
+
+    @description("Creating known_hosts...")
+    def _create_known_hosts(self):
+        self._api.create_known_hosts(self._full_local_known_hosts, self._sa_username, self._sa_auth_key)
+        return
+
 
 def main():
-    app = ExportSSHConfigApplication(api=API(), ssh_config=SSHConfig(), cryptor=RNCryptor(), logger=PrettyLogger())
+    app = ExportSSHConfigApplication(api=API(), ssh_config=SSHConfig(), known_host=KnownHosts(), cryptor=RNCryptor(), logger=PrettyLogger())
     try:
         app.run()
     except (KeyboardInterrupt, EOFError):

@@ -52,11 +52,12 @@ class SSHConfigApplication(object):
 
     SERVER_AUDITOR_SETTINGS_PATH = os.path.expanduser('~/.serverauditor')
 
-    def __init__(self, api, ssh_config, cryptor, logger):
+    def __init__(self, api, ssh_config, known_host, cryptor, logger):
         self._api = api
         self._config = ssh_config
         self._cryptor = cryptor
         self._logger = logger
+        self._known_host = known_host
 
         self._sa_username = ''
         self._sa_master_password = ''
@@ -64,9 +65,13 @@ class SSHConfigApplication(object):
 
         self._sa_keys = {}
         self._sa_connections = []
+        self._sa_known_hosts = []
 
         self._local_hosts = []
         self._full_local_hosts = []
+
+        self._local_known_hosts = []
+        self._full_local_known_hosts = []
         return
 
     def run(self):
@@ -173,11 +178,35 @@ class SSHConfigApplication(object):
                 remove_key(key)
         return
 
+    @description("Getting current known_hosts...")
+    def _get_sa_known_host(self):
+        self._sa_known_hosts = self._api.get_known_hosts(
+            self._sa_username, self._sa_auth_key)
+        return
+
+    @description("Decrypting known_hosts...")
+    def _decrypt_sa_known_host(self):
+        def decrypt_knownhost(con):
+            for attr in ('hostnames', 'key', 'comment'):
+                con[attr] = con[attr] and self._cryptor.decrypt(con[attr])
+            return con
+
+        self._sa_known_hosts = p_map(
+            decrypt_knownhost, self._sa_known_hosts
+        )
+
+        return
 
     @description("Parsing ssh config file...")
     def _parse_local_config(self):
         self._config.parse()
         self._local_hosts = self._config.get_complete_hosts()
+        return
+
+    @description("Parsing known_hosts file...")
+    def _parse_local_known_hosts(self):
+        self._known_host.parse()
+        self._local_known_hosts = self._known_host.get_known_hosts()
         return
 
     def _get_sa_connection_uri(self, conn):

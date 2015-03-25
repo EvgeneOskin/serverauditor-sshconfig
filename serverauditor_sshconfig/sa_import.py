@@ -15,6 +15,7 @@ from serverauditor_sshconfig.core.api import API
 from serverauditor_sshconfig.core.cryptor import RNCryptor
 from serverauditor_sshconfig.core.logger import PrettyLogger
 from serverauditor_sshconfig.core.ssh_config import SSHConfig
+from serverauditor_sshconfig.core.known_hosts import KnownHosts
 from serverauditor_sshconfig.core.utils import p_input
 
 
@@ -34,6 +35,10 @@ Host {host}
     SSH_CONFIG_HOST_DUPLICATE = """\
 # Duplicate host will not work with SSH
 """
+    SSH_KNOWN_HOST_TEMPLATE = """\
+# The following known host was created by ServerAuditor
+{marker} {hostnames} {key} {comment}
+"""
 
     def run(self):
         self._greeting()
@@ -42,11 +47,19 @@ Host {host}
         self._get_sa_keys_and_connections()
         self._decrypt_sa_keys_and_connections()
         self._fix_sa_keys_and_connections()
+        self._get_sa_known_host()
+        self._decrypt_sa_known_host()
 
         self._parse_local_config()
         self._sync_for_import()
         self._choose_new_hosts()
-        self._create_keys_and_connections()
+        if self._sa_connections:
+            self._create_keys_and_connections()
+
+        self._parse_local_known_hosts()
+        self._sync_known_host_for_import()
+        if self._sa_known_hosts:
+            self._create_known_hosts()
 
         self._valediction()
         return
@@ -92,8 +105,7 @@ Host {host}
 
         if not self._sa_connections:
             self._logger.log("There are no new connections on ServerAuditor's servers.")
-            self._valediction()
-            sys.exit(0)
+            return
 
         self._logger.log("The following new hosts have been founded on ServerAuditor's servers:", sleep=0)
         self._logger.log(get_connections_names(), color='blue')
@@ -115,9 +127,6 @@ Host {host}
                 self._sa_connections.pop(number)
                 self._logger.log(get_connections_names(), color='blue')
 
-        if not self._sa_connections:
-            self._valediction()
-            sys.exit(0)
         return
 
     @description("Creating keys and connections...")
@@ -190,9 +199,46 @@ Host {host}
 
         return
 
+    @description("Synchronization...")
+    def _sync_known_host_for_import(self):
+        def is_exist(sa_known_host):
+            for known_host in self._local_known_hosts:
+                if (sa_known_host['hostnames'] == known_host['hostnames'] and
+                        sa_known_host['key'] == known_host['key'] and
+                        sa_known_host['marker'] == known_host['marker']):
+                    return True
+
+            return False
+
+        for sa_known_host in self._sa_known_hosts[:]:
+            if is_exist(sa_known_host):
+                # self._logger.log('Known host was already used by ssh.', color='blue')
+                self._sa_connections.remove(sa_known_host)
+
+        return
+
+    @description("Creating known_hosts...")
+    def _create_known_hosts(self):
+        def get_param_name(s):
+            if any(c.isspace() for c in s):
+                return '"%s"' % s
+            return s
+
+        def create(known_host):
+            with open(self._known_host.USER_FILE_PATH, 'a') as f:
+                serialized = self.SSH_KNOWN_HOST_TEMPLATE.format(**known_host)
+                f.write(serialized)
+                f.write('\n')
+            return
+
+        for known_host in self._sa_known_hosts:
+            create(known_host)
+
+        return
+
 
 def main():
-    app = ImportSSHConfigApplication(api=API(), ssh_config=SSHConfig(), cryptor=RNCryptor(), logger=PrettyLogger())
+    app = ImportSSHConfigApplication(api=API(), ssh_config=SSHConfig(), known_host=KnownHosts(), cryptor=RNCryptor(), logger=PrettyLogger())
     try:
         app.run()
     except (KeyboardInterrupt, EOFError):
